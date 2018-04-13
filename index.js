@@ -1,8 +1,9 @@
 const express = require('express')
 const request = require('request');
 
-const domain = 'localhost';
-const port = '3000';
+const base_url = 'http://autumn-resonance-1298.getsandbox.com/';
+const endpoint_inv = 'inventory';
+const endpoint_prod = 'products';
 const status_ok = 'OK';
 const status_err = 'ERROR';
 
@@ -14,32 +15,24 @@ app.listen(3000)
 
 /*
 Handler - get all products
-async function and await operator to make sure that the fetchInventory HTTP request comes back.
+async function and await operator to make sure that the fetchData HTTP request comes back.
 Otherwise we end up with no inventory.
 */
 app.get('/products', async (req, res) => {
 	errors_list = [];
 	warnings_list = [];
 
-	var inv_response;
-	var inv_status;
-	var inv_message = '';
+	var inv_resp;
 	var inv_list = [];
-	var price_list = [];
+	var prod_list = [];
 	var master_list = [];
 
 	console.log("request for all products");
 
-	inv_response = await fetchInventory();
-	inv_status = inv_response.status;
-	if (inv_status == status_err) {
-		master_list = processResults(price_list, inv_status, inv_message,inv_list);
-	}
-	
-	inv_list = inv_response.inventory;
-	price_list = queryPrice();
-
-	master_list = processResults(price_list, inv_status, inv_message, inv_list);
+	prod_list = await fetchData(endpoint_prod);
+	inv_resp = await fetchData(endpoint_inv);
+	inv_list = inv_resp.inventory;
+	master_list = processResults(prod_list, inv_list);
   res.json({products: master_list, errors: errors_list, warnings: warnings_list});
 })
 
@@ -53,26 +46,20 @@ app.get('/products/:name', async (req, res) => {
 	warnings_list = [];
 
 	var name;
-	var inv_response;
-	var inv_status;
-	var inv_message = '';
+	var prod_resp;
+	var inv_resp;
 	var inv_list = [];
-	var price_list = [];
+	var prod_list = [];
 	var master_list = [];
 
 	name = req.params.name; 
 	console.log("request for product '" + name + "'");
 
-	inv_response = await fetchInventory(name);
-	inv_status = inv_response.status;
-	if (inv_status == status_err) {
-		master_list = processResults(price_list, inv_status, inv_message, inv_list);
-	}
-	
-	inv_list = inv_response.inventory;
-	price_list = queryPrice(name);
-
-	master_list = processResults(price_list, inv_status, inv_message, inv_list, name);
+	prod_resp = await fetchData(endpoint_prod, name);
+	prod_list = prod_resp.product;
+	inv_resp = await fetchData(endpoint_inv, name);
+	inv_list = inv_resp.inventory;
+	master_list = processResults(prod_list, inv_list, name);
   res.json({products: master_list, errors: errors_list, warnings: warnings_list});
 })
   
@@ -104,22 +91,24 @@ app.get('/inventory/:name', async (req, res) => {
  
 /*
 First make sure the results set is even valid. if they aren't valid, just return the empty master_list.
-Then hopefully pair the price list element(s) with the inventory list element(s) and return the
+Then hopefully pair the prod list element(s) with the inventory list element(s) and return the
 master_list.
 */
-function processResults(price_list, inv_status, inv_message, inventory_list, name) {
+function processResults(prod_list, inventory_list, name) {
 
 	var master_list = [];
 
-	if (validateResults(price_list, inv_status, inv_message, inventory_list, name) == false) {
+	console.log("prod_list is " + prod_list);
+	console.log("inventory_list is " + inventory_list);
+	if (validateResults(prod_list, inventory_list, name) == false) {
 		return master_list;
 	}
 
-	for (i = 0; i < price_list.length; i++) {
+	for (i = 0; i < prod_list.length; i++) {
 		for(j = 0; j < inventory_list.length; j++) {
-			if (price_list[i]['name'] == inventory_list[j]['name']){
-				master_list[i] = price_list[i];
-				master_list[i]['quantity'] = inventory_list[j]['quantity'];
+			if (prod_list[i]['name'] == inventory_list[j]['name']){
+				master_list[i] = prod_list[i];
+				master_list[i]['inventory'] = inventory_list[j]['inventory'];
 				break;
 			}
 		}
@@ -132,29 +121,21 @@ Validation.
 Note that this wil populate both errors and warnings lists that will be returned
 to the requestor as part of the response.
 */
-function validateResults(price_list, inv_status, inv_message, inventory_list, name) {
+function validateResults(prod_list, inventory_list, name) {
 
+	console.log("validateResults...");
 	var process_ok = true;
 
 	/* 
-	If at any point we got an error status, we can't do anything. Add the error message
-	to the errors list and return a flag.
-	*/
-	if(inv_status == status_err) {
-			errors_list.push(inv_message);
-			return false;
-	}
-	
-	/* 
-	Somehow we got no prices information.
+	Somehow we got no prod information.
 	Add a message to the errors list and set a flag; but note that we're
 	going to keep going so that we can catch other errors that might be there.
 	*/
-	if(price_list.length == 0) {
+	if(prod_list.length == 0) {
 		if (name == undefined) {
-			errors_list.push('price list is empty');
+			errors_list.push('prod list is empty');
 		} else {
-			errors_list.push("0 price entries match product name '" + name + "'");
+			errors_list.push("0 prod entries match product name '" + name + "'");
 		}
 		process_ok = false;
 	}
@@ -186,17 +167,17 @@ function validateResults(price_list, inv_status, inv_message, inventory_list, na
 	So instead we add a warning about the missing item.
 	*/
 	var matches = 0;
-	for (i = 0; i < price_list.length; i++) {
+	for (i = 0; i < prod_list.length; i++) {
 		var has_match = false;
 		for(j = 0; j < inventory_list.length; j++) {
-			if(inventory_list[j]['name'] == price_list[i]['name'] ) {
+			if(inventory_list[j]['name'] == prod_list[i]['name'] ) {
 				matches++;
 				has_match = true;
 				continue;
 			}
 		}
 		if (has_match == false) {
-			warnings_list.push("no inventory entry for product '" + price_list[i]['name'] + "'" );
+			warnings_list.push("no inventory entry for product '" + prod_list[i]['name'] + "'" );
 		}
 	}
 
@@ -205,15 +186,15 @@ function validateResults(price_list, inv_status, inv_message, inventory_list, na
 	*/
 	for(i = 0; i < inventory_list.length; i++) {
 		var has_match = false;
-		for (j = 0; j < price_list.length; j++) {
-			if(inventory_list[i]['name'] == price_list[j]['name'] ) {
+		for (j = 0; j < prod_list.length; j++) {
+			if(inventory_list[i]['name'] == prod_list[j]['name'] ) {
 				matches++;
 				has_match = true;
 				continue;
 			}
 		}
 		if (has_match == false) {
-			warnings_list.push("no price entry for product '" + inventory_list[i]['name'] + "'" );
+			warnings_list.push("no prod entry for product '" + inventory_list[i]['name'] + "'" );
 		}
 	}
 
@@ -228,16 +209,17 @@ function validateResults(price_list, inv_status, inv_message, inventory_list, na
 }
 
 /*
-HTTP request to the inventory endpoint.
+HTTP request to the endpoint.
 Returns a Promise object representing eventual completion/failure.
 */
-function fetchInventory(product_name) {
+function fetchData(endpoint, product_name) {
 
 	//Different endpoint depending on whether we want all products or just one
-	var url = "http://" + domain + ":" + port + "/inventory/";
+	var url = base_url + endpoint;
 	if (product_name != undefined) {
-		url += product_name;
+		url += "/" + product_name;
 	}
+	console.log("request to '" + url + "'");
 
 	return new Promise(function(resolve, reject) {
 		request(url, { json : true }, (err, res, body) => {
@@ -251,46 +233,3 @@ function fetchInventory(product_name) {
 	});
 }
 
-/*
-STUB - query db here IRL
-*/
-function queryInventory(product_name) {
-	const inventory = [
-			{'name' :'prod0', 'quantity' : 9}, 
-			{'name' :'prod1' , 'quantity' : 26}, 
-			{'name' :'prod22' , 'quantity' : 18}
-	];
-
-	if (product_name === undefined) {
-		return inventory;
-	} else {
-		for (i = 0; i < inventory.length; i++) {
-			if (inventory[i]['name'] == product_name) {
-				return [inventory[i]];
-			}
-		}
-		return [];
-	}
-}
-
-/*
-STUB - query db here IRL
-*/
-function queryPrice(product_name) {
-	const prices = [
-			{'name' :'prod0', 'price' : 1.99 }, 
-			{'name' :'prod1' , 'price' : .99}, 
-			{'name' :'prod2' , 'price' : .19}
-	];
-
-	if (product_name === undefined) {
-		return prices;
-	} else {
-		for (i = 0; i < prices.length; i++) {
-			if (prices[i]['name'] == product_name) {
-				return [prices[i]];
-			}
-		}
-		return [];
-	}
-}
